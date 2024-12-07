@@ -2,11 +2,17 @@ import streamlit as st
 from streamlit_option_menu import option_menu
 from PIL import Image
 import numpy as np
-
+import threading
+from typing import Union
+import av
 import streamlit as st
 from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, WebRtcMode
 from streamlit.components.v1 import html
+import snapshot as snap
+import logging
+import queue
 
+logger = logging.getLogger(__name__)
 
 # Setup streamlit page
 st.set_page_config(page_title="Access IR Camera",layout="wide")
@@ -115,28 +121,97 @@ if selected == SIDEBAR_OPTIONS[1]:
     This app lists USB-connected cameras on your device. 
     Please allow camera permissions to proceed.
     """)
+
+    def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
+        img = frame.to_ndarray(format="bgr24")
+        print(img.shape)
+        # Here you can perform any pre-processing on the image
+        # For example, you could resize the image:
+        # img = cv2.resize(img, (256, 384))
+        return av.VideoFrame.from_ndarray(img, format="bgr24")
+
+    class IRVideoTransformer(VideoTransformerBase):
+        def transform(self, frame):
+            # Additional processing (e.g., image enhancement) can be done here
+            st.write(type(frame))
+            return frame
     
-    # Step 2: Start camera feed based on selection
-    selected_camera = st.text_input("Enter the device ID of the IR Camera (from above):")
+    class VideoTransformer(VideoTransformerBase):
+            frame_lock: threading.Lock  # `transform()` is running in another thread, then a lock object is used here for thread-safety.
+            in_image: Union[np.ndarray, None]
+            out_image: Union[np.ndarray, None]
     
-    if selected_camera:
-        st.info(f"Starting camera feed for Device ID: {selected_camera}")
-        
-        class IRVideoTransformer(VideoTransformerBase):
-            def transform(self, frame):
-                # Additional processing (e.g., image enhancement) can be done here
-                return frame
-        
-        webrtc_streamer(
-            key="ir-camera-stream",
-            mode=WebRtcMode.SENDRECV,
-            video_transformer_factory=IRVideoTransformer,
-            media_stream_constraints={
-                "video": {"deviceId": {"exact": selected_camera}},
-                "audio": False,
-            }
+            def __init__(self) -> None:
+                self.frame_lock = threading.Lock()
+                self.in_image = None
+                self.out_image = None
+    
+            def transform(self, frame: av.VideoFrame) -> np.ndarray:
+                in_image = frame.to_ndarray(format="bgr24")
+    
+                out_image = in_image[:, ::-1, :]  # Simple flipping for example.
+    
+                with self.frame_lock:
+                    self.in_image = in_image
+                    self.out_image = out_image
+    
+                return out_image
+    # video_constraints={
+    #     "deviceId": "your_camera_id",
+    #     "width": 1280,
+    #     "height": 720,
+    #     "frameRate": 30
+    # }
+
+    ir_frame = webrtc_streamer(
+        key="ir-camera-stream",
+        mode=WebRtcMode.SENDRECV,
+        # rtc_configuration="iceServers",
+        video_processor_factory=VideoTransformer,
+        video_frame_callback=video_frame_callback,
+        media_stream_constraints={
+            "video": True, #{"frameRate": 25,"height":384, "width":256},
+            "audio": False,
+            },
+        async_processing=True,
         )
-    
+    snap_button = st.button("Snapshot")
+
+    if ir_frame.state.playing:
+        st.write("Stream is active")
+    else:
+        st.write("Stream is not active")
+
+    image_place = st.empty()
+
+    while True:
+        if ir_frame.video_receiver:
+            try:
+                video_frame = ir_frame.video_receiver.get_frame(timeout=1)
+            except queue.Empty:
+                logger.warning("Queue is empty. Abort.")
+                break
+
+            img_rgb = video_frame.to_ndarray(format="rgb24")
+            image_place.image(img_rgb)
+        else:
+            logger.warning("AudioReciver is not set. Abort.")
+            break
+
+    if ir_frame.state.playing:
+        print("Hello")
+        if snap_button:
+            with ir_frame.input_video_track.frame_lock:
+                out_image = ir_frame.video_transformer.out_image
+                # If the image is not empty, display it and pass to model
+            if out_image is not None:
+                
+                st.image(out_image, channels="BGR")
+        
+            # In case ICE state is not successful, show warning
+            else:
+                st.warning("No frames available yet.")
+
     # Step 3: Capture images from the feed
     st.write("You can use the 'Capture' button below to take pictures.")
 
