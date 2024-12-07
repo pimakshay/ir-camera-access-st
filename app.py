@@ -8,7 +8,6 @@ import av
 import streamlit as st
 from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, WebRtcMode
 from streamlit.components.v1 import html
-import snapshot as snap
 import logging
 import queue
 
