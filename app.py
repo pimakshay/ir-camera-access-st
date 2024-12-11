@@ -7,7 +7,6 @@ from typing import Union
 import av
 import streamlit as st
 from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, WebRtcMode
-from streamlit.components.v1 import html
 import logging
 import queue
 
@@ -16,124 +15,70 @@ logger = logging.getLogger(__name__)
 # Setup streamlit page
 st.set_page_config(page_title="Access IR Camera",layout="wide")
 
-# 1=sidebar menu, 2=horizontal menu, 3=horizontal menu w/ custom menu
-EXAMPLE_NO = 2
-SIDEBAR_OPTIONS = ["Trends", "Detections", "Thermal Patterns"]
+SIDEBAR_OPTIONS = ["Streamlit Camera Input", "Streamlit Webrtc"]
 
 
-def streamlit_menu(example=1):
-    if example == 1:
-        # 1. as sidebar menu
-        with st.sidebar:
-            selected = option_menu(
-                menu_title="Main Menu",  # required
-                options=SIDEBAR_OPTIONS,  # required
-                icons=["house", "book", "envelope"],  # optional
-                menu_icon="cast",  # optional
-                default_index=0,  # optional
-            )
-        return selected
-
-    if example == 2:
-        # 2. horizontal menu w/o custom style
+def streamlit_menu():
+        
         selected = option_menu(
             menu_title=None,  # required
             options=SIDEBAR_OPTIONS,  # required
-            icons=["house", "book", "envelope"],  # optional
+            icons=["house", "book"],  # optional
             menu_icon="cast",  # optional
             default_index=0,  # optional
             orientation="horizontal",
         )
         return selected
 
-    if example == 3:
-        # 2. horizontal menu with custom style
-        selected = option_menu(
-            menu_title=None,  # required
-            options=SIDEBAR_OPTIONS,  # required
-            icons=["house", "book", "envelope"],  # optional
-            menu_icon="cast",  # optional
-            default_index=0,  # optional
-            orientation="horizontal",
-            styles={
-                "container": {"padding": "0!important", "background-color": "#fafafa"},
-                "icon": {"color": "orange", "font-size": "25px"},
-                "nav-link": {
-                    "font-size": "25px",
-                    "text-align": "left",
-                    "margin": "0px",
-                    "--hover-color": "#eee",
-                },
-                "nav-link-selected": {"background-color": "green"},
-            },
-        )
-        return selected
 
-
-selected = streamlit_menu(example=EXAMPLE_NO)
-
-if selected in SIDEBAR_OPTIONS:
-    st.title(f"You have selected {selected}")
-
-# ---- HIDE STREAMLIT STYLE ----
-hide_st_style = """
-            <style>
-            #MainMenu {visibility: hidden;}
-            footer {visibility: hidden;}
-            header {visibility: hidden;}
-            </style>
-            """
-st.markdown(hide_st_style, unsafe_allow_html=True)
-
+selected = streamlit_menu()
 
 if selected == SIDEBAR_OPTIONS[0]:
-    enable = st.checkbox("Enable USB camera")
-    picture = st.camera_input("Take a picture", disabled=not enable)
-    
-    # st.write(f"Type: {type(picture)}, datatype: {type(picture.data)}")
-    if picture:
-        st.image(picture)
 
-    if picture is not None:
-        # To read image file buffer as bytes
-        bytes_data = picture.getvalue()
+    st.subheader("Using streamlit camera input")
 
-        # Convert the bytes data to a PIL Image object
-        img = Image.open(picture)
-        
-        # Convert PIL Image to numpy array
+    st.markdown("""**Current Challenges**: 
+             1. Captured image shape is not same as camera output shape but is the shape of camera_input window.
+             2. Cannot identify usb cameras connected to smartphones (Android)
+             """)
+
+    img_file_buffer = st.camera_input("Take a picture")
+
+    if img_file_buffer is not None:
+        # To read image file buffer as a PIL Image:
+        img = Image.open(img_file_buffer)
+
+        # To convert PIL Image to numpy array:
         img_array = np.array(img)
-        
-        # Display the shape of the numpy array
-        st.write("Shape of the image array:", img_array.shape)
-        
-        # You can now use img_array for further processing or display
-        st.image(img_array, caption="Captured Image as NumPy Array")
+
+        # Check the type of img_array:
+        # Should output: <class 'numpy.ndarray'>
+        st.write(type(img_array))
+
+        # Check the shape of img_array:
+        # Should output original camera shape: (height, width, channels)
+        # however outputs camera_input window size
+        st.write(img_array.shape)
+
 
 if selected == SIDEBAR_OPTIONS[1]:
 
-    st.title("Infrared Thermal USB Camera Selector")
-    st.subheader("Select and Use Your IR Camera")
-    
-    # Instructions for Android/iOS/Web Users
-    st.write("""
-    This app lists USB-connected cameras on your device. 
-    Please allow camera permissions to proceed.
-    """)
+    link_text = "Streamlit-WebRTC"
+    url = "https://github.com/whitphx/streamlit-webrtc"
+    st.subheader(f"Learn more about [{link_text}]({url})")
 
+    st.markdown("""**Current Challenges**: 
+             1. Capturing images or videos is not straightforward.
+             2. Cannot identify usb cameras connected to smartphones (Android)
+             """)
+    
     def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
         img = frame.to_ndarray(format="bgr24")
         print(img.shape)
-        # Here you can perform any pre-processing on the image
-        # For example, you could resize the image:
+
         # img = cv2.resize(img, (256, 384))
         return av.VideoFrame.from_ndarray(img, format="bgr24")
 
-    class IRVideoTransformer(VideoTransformerBase):
-        def transform(self, frame):
-            # Additional processing (e.g., image enhancement) can be done here
-            st.write(type(frame))
-            return frame
     
     class VideoTransformer(VideoTransformerBase):
             frame_lock: threading.Lock  # `transform()` is running in another thread, then a lock object is used here for thread-safety.
@@ -155,6 +100,7 @@ if selected == SIDEBAR_OPTIONS[1]:
                     self.out_image = out_image
     
                 return out_image
+            
     # video_constraints={
     #     "deviceId": "your_camera_id",
     #     "width": 1280,
@@ -194,7 +140,7 @@ if selected == SIDEBAR_OPTIONS[1]:
             img_rgb = video_frame.to_ndarray(format="rgb24")
             image_place.image(img_rgb)
         else:
-            logger.warning("AudioReciver is not set. Abort.")
+            logger.warning("VideoReciver is not set. Abort.")
             break
 
     if ir_frame.state.playing:
@@ -211,10 +157,13 @@ if selected == SIDEBAR_OPTIONS[1]:
             else:
                 st.warning("No frames available yet.")
 
-    # Step 3: Capture images from the feed
-    st.write("You can use the 'Capture' button below to take pictures.")
 
-    captured_image = st.button("Capture Image")
-    if captured_image:
-        st.write("Captured image processing will be implemented here.")
-
+# ---- HIDE STREAMLIT STYLE ----
+hide_st_style = """
+            <style>
+            #MainMenu {visibility: hidden;}
+            footer {visibility: hidden;}
+            header {visibility: hidden;}
+            </style>
+            """
+st.markdown(hide_st_style, unsafe_allow_html=True)
